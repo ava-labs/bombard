@@ -35,11 +35,14 @@ p50=54ms  p95=209ms  samples=4012
 ## Run
 
 ```sh
-go run . \
+go run github.com/ava-labs/bombard@latest \
   -rpc http://<host>:9650/ext/bc/<CHAIN_ID>/rpc,http://<host2>:9650/ext/bc/<CHAIN_ID>/rpc \
   -key issuer.key \
   -rps 1000 -duration 60s
 ```
+
+Or grab a prebuilt binary (linux/darwin, amd64/arm64) from
+[releases](https://github.com/ava-labs/bombard/releases).
 
 - `-rpc` (required): comma-separated RPC endpoints. Sends fan out across all;
   endpoints that fall behind the tip are dropped and rejoin when caught up.
