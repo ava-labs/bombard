@@ -1,4 +1,4 @@
-module github.com/containerman17/bombard
+module github.com/ava-labs/mombard
 
 go 1.26.4
 
