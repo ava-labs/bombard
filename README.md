@@ -10,26 +10,26 @@ consensus, proposer, and txpool behavior under load instead of just counting
 receipts. bombard does both, with a live terminal UI.
 
 ```text
-Bombard  target=100 rps  elapsed=42s  status=at-cap
+Bombard  target=4000 rps  elapsed=59s  status=tracking
 
- 45 ┤                                                             ╭╮  ╭╮
- 42 ┤                                                 ╭╮          ││  ││     ╭
- 38 ┤                                                 ││        ╭╮││  ││     │
- 35 ┤                                         ╭╮      ││  ╭╮    ││││  ││    ╭╯
- 31 ┤                                ╭╮       ││  ╭─╮ ││ ╭╯│    ││││  ││╭╮  │
- 28 ┤                                ││   ╭╮  ││  │ │ ││ │ │    │││╰╮ ││││ ╭╯
- 24 ┤                                ││  ╭╯│  ││  │ │ ││ │ │╭╮  │││ │ ││││ │
- 21 ┤                                ││╭╮│ │ ╭╯│╭╮│ │╭╯│ │ │││  │││ │ ││││╭╯
- 17 ┤                                │╰╯╰╯ ╰─╯ ╰╯╰╯ ╰╯ │ │ ││╰──╯││ ╰─╯││││
- 14 ┤                                │                 ╰─╯ ╰╯    ││    ╰╯╰╯
- 10 ┤                               ╭╯                           ╰╯
-  7 ┤                               │
-  3 ┤                               │
-  0 ┼───────────────────────────────╯
-                           mined transactions per second
+ 5334 ┤                                        ╭╮
+ 4923 ┤                                        ││
+ 4513 ┤              ╭╮           ╭╮  ╭╮╭╮     ││  ╭╮  ╭╮      ╭╮ ╭╮        ╭╮
+ 4103 ┤              │╰───╮╭╮╭─╮╭╮││ ╭╯││╰───╮ │╰╮ │╰─╮│╰─╮╭──╮││ ││╭╮╭─╮╭─╮│╰
+ 3693 ┤            ╭─╯    ╰╯╰╯ ╰╯╰╯╰─╯ ╰╯    │ │ ╰─╯  ╰╯  ╰╯  ╰╯╰─╯╰╯╰╯ ╰╯ ╰╯
+ 3282 ┤            │                         ╰─╯
+ 2872 ┤            │
+ 2462 ┤            │
+ 2051 ┤            │
+ 1641 ┤            │
+ 1231 ┤            │
+  821 ┤            │
+  410 ┤            │
+    0 ┼────────────╯
+                            mined transactions per second
 
-issued=1312  mined=1012  inflight=300/300  resubmits=7044  minedTps=42/100
-p50=11.39s  p95=11.66s  samples=42
+issued=235993  mined=235241  inflight=198/2000  resubmits=0  minedTps=4010/4000
+p50=54ms  p95=209ms  samples=4012
 ```
 
 ## Run
