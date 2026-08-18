@@ -1,4 +1,4 @@
-# mombard
+# bombard
 
 Load generator for Avalanche L1s.
 
@@ -7,7 +7,7 @@ produces subsecond blocks, so a load tool has to read Avalanche's own block
 fields (`timestampMilliseconds`) to measure block times and latency at all,
 and it has to scrape the node's Prometheus metrics (`/ext/metrics`) to see
 consensus, proposer, and txpool behavior under load instead of just counting
-receipts. mombard does both, with a live terminal UI.
+receipts. bombard does both, with a live terminal UI.
 
 ## Run
 
@@ -21,7 +21,7 @@ go run . \
 - `-rpc` (required): comma-separated RPC endpoints. Sends fan out across all;
   endpoints that fall behind the tip are dropped and rejoin when caught up.
 - `-key` (required): file holding the issuer private key as 64 hex characters.
-  The account must be funded; mombard checks the balance at startup.
+  The account must be funded; bombard checks the balance at startup.
 
 Everything else has defaults; see `-h`.
 

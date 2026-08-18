@@ -1,4 +1,4 @@
-module github.com/ava-labs/mombard
+module github.com/ava-labs/bombard
 
 go 1.26.4
 
