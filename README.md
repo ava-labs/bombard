@@ -9,6 +9,29 @@ and it has to scrape the node's Prometheus metrics (`/ext/metrics`) to see
 consensus, proposer, and txpool behavior under load instead of just counting
 receipts. bombard does both, with a live terminal UI.
 
+```text
+Bombard  target=100 rps  elapsed=42s  status=at-cap
+
+ 45 ┤                                                             ╭╮  ╭╮
+ 42 ┤                                                 ╭╮          ││  ││     ╭
+ 38 ┤                                                 ││        ╭╮││  ││     │
+ 35 ┤                                         ╭╮      ││  ╭╮    ││││  ││    ╭╯
+ 31 ┤                                ╭╮       ││  ╭─╮ ││ ╭╯│    ││││  ││╭╮  │
+ 28 ┤                                ││   ╭╮  ││  │ │ ││ │ │    │││╰╮ ││││ ╭╯
+ 24 ┤                                ││  ╭╯│  ││  │ │ ││ │ │╭╮  │││ │ ││││ │
+ 21 ┤                                ││╭╮│ │ ╭╯│╭╮│ │╭╯│ │ │││  │││ │ ││││╭╯
+ 17 ┤                                │╰╯╰╯ ╰─╯ ╰╯╰╯ ╰╯ │ │ ││╰──╯││ ╰─╯││││
+ 14 ┤                                │                 ╰─╯ ╰╯    ││    ╰╯╰╯
+ 10 ┤                               ╭╯                           ╰╯
+  7 ┤                               │
+  3 ┤                               │
+  0 ┼───────────────────────────────╯
+                           mined transactions per second
+
+issued=1312  mined=1012  inflight=300/300  resubmits=7044  minedTps=42/100
+p50=11.39s  p95=11.66s  samples=42
+```
+
 ## Run
 
 ```sh
