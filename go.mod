@@ -1,6 +1,6 @@
 module github.com/ava-labs/bombard
 
-go 1.26.4
+go 1.26.6
 
 require (
 	github.com/ava-labs/libevm v1.13.15-0.20251016142715-1bccf4f2ddb2
@@ -27,8 +27,8 @@ require (
 	github.com/tklauser/numcpus v0.6.1 // indirect
 	golang.org/x/crypto v0.52.0 // indirect
 	golang.org/x/exp v0.0.0-20231110203233-9a3e6036ecaa // indirect
-	golang.org/x/mod v0.29.0 // indirect
-	golang.org/x/sync v0.17.0 // indirect
-	golang.org/x/sys v0.45.0 // indirect
-	golang.org/x/tools v0.38.0 // indirect
+	golang.org/x/mod v0.40.0 // indirect
+	golang.org/x/sync v0.22.0 // indirect
+	golang.org/x/sys v0.47.0 // indirect
+	golang.org/x/tools v0.49.0 // indirect
 )
