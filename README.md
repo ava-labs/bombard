@@ -58,3 +58,12 @@ bucket paces issuance at `-rps`; an in-flight cap is the only backpressure.
 A tx leaves the system only when its nonce mines: anything still in flight
 after `-resubmit` is re-sent verbatim (same bytes, same hash), so the run
 survives mempool loss from node crashes and failovers without nonce gaps.
+
+## License
+
+BSD 3-Clause, see [LICENSE](LICENSE).
+
+Released binaries statically link
+[github.com/ava-labs/libevm](https://github.com/ava-labs/libevm), which is
+LGPL-3.0. Source for that library is available at its repository, and it may
+be modified and relinked under the terms of the LGPL.
