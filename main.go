@@ -375,7 +375,7 @@ func main() {
 	// Setup connection (chain ID + start nonce): use the first reachable endpoint.
 	var setupRPC *rpc.Client
 	for _, ws := range wsURLs {
-		rc, err := rpc.DialWebsocket(ctx, ws, "")
+		rc, err := dialRPC(ctx, ws)
 		if err != nil {
 			continue
 		}

@@ -70,7 +70,7 @@ func watchBlocks(ctx context.Context, wsURL string, pollInterval time.Duration) 
 				return nil
 			default:
 			}
-			if c, err := rpc.DialWebsocket(ctx, wsURL, ""); err == nil {
+			if c, err := dialRPC(ctx, wsURL); err == nil {
 				return c
 			}
 			time.Sleep(time.Second)

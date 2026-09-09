@@ -257,3 +257,22 @@ func httpRPCToWS(rpcURL string) string {
 	}
 	return u
 }
+
+// dialRPC connects over websocket and falls back to plain HTTP on the /rpc
+// path for nodes that serve no /ws endpoint; block watching polls either way.
+func dialRPC(ctx context.Context, wsURL string) (*rpc.Client, error) {
+	if c, err := rpc.DialWebsocket(ctx, wsURL, ""); err == nil {
+		return c, nil
+	}
+	u := wsURL
+	switch {
+	case strings.HasPrefix(u, "wss://"):
+		u = "https://" + strings.TrimPrefix(u, "wss://")
+	case strings.HasPrefix(u, "ws://"):
+		u = "http://" + strings.TrimPrefix(u, "ws://")
+	}
+	if pre, ok := strings.CutSuffix(u, "/ws"); ok {
+		u = pre + "/rpc"
+	}
+	return rpc.DialContext(ctx, u)
+}
