@@ -47,8 +47,10 @@ import (
 
 const (
 	gasLimitNative = 21000
-	gasPrice       = 25
+	minGasPrice    = 25 // floor; gasPrice is raised to the node's suggested price at startup
 )
+
+var gasPrice = big.NewInt(minGasPrice)
 
 type txState struct {
 	signed    *types.Transaction
@@ -387,6 +389,10 @@ func main() {
 	defer setupRPC.Close()
 	client := ethclient.NewClient(setupRPC)
 
+	if p, err := client.SuggestGasPrice(ctx); err == nil && p.Cmp(gasPrice) > 0 {
+		gasPrice = p
+	}
+	fmt.Printf("Gas price: %s wei\n", gasPrice)
 	chainID, err := client.NetworkID(ctx)
 	if err != nil {
 		fmt.Printf("Failed to get chain ID: %v\n", err)
@@ -675,7 +681,7 @@ func sendWorker(
 	address common.Address,
 ) {
 	for nonce := range sendCh {
-		tx := types.NewTransaction(nonce, address, big.NewInt(1), gasLimitNative, big.NewInt(gasPrice), nil)
+		tx := types.NewTransaction(nonce, address, big.NewInt(1), gasLimitNative, gasPrice, nil)
 		signed, err := types.SignTx(tx, signer, key)
 		if err != nil {
 			fmt.Printf("sign nonce %d: %v\n", nonce, err)
