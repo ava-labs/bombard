@@ -283,6 +283,7 @@ func main() {
 	rpcFlag := flag.String("rpc", "", "Comma-separated RPC URLs (required). Sends fan out across all; watchers race across all.")
 	keyFlag := flag.String("key", "", "Path to the root private key: a file holding exactly 64 hex characters (required). Sender 0; it must be funded or the run mines nothing.")
 	batchFlag := flag.Int("batch", 1, "Txs per HTTP request to a node: a JSON-RPC batch of eth_sendRawTransaction. 1 = one request per tx.")
+	erc20Flag := flag.Bool("erc20", false, "Send ERC20 transfers instead of native value: the root deploys the token and mints every sender a balance at startup; each tx is transfer(other sender, 1).")
 	sendersFlag := flag.Int("senders", 1, "Number of issuing accounts. Sender 0 is the root key; the rest are derived from it deterministically and funded by the root when they hold less than half of -fund.")
 	fundFlag := flag.String("fund", "10000000000000000000", "Wei the root sends to each derived sender that holds less than half of it (default 10 coins).")
 	rps := flag.Int("rps", 1000, "Target transactions issued per second")
@@ -483,6 +484,25 @@ func main() {
 		os.Exit(1)
 	}
 	fmt.Printf("Sender 0: %s  start nonce: %d (max accepted across %d node(s))\n", address.Hex(), senders[0].nextNonce, len(bc.nodes))
+	mkTx := func(k txKey, s *sender) *types.Transaction {
+		return types.NewTransaction(k.nonce, s.addr, big.NewInt(1), gasLimitNative, gasPrice, nil)
+	}
+	if *erc20Flag {
+		contract, err := setupERC20(ctx, client, bc, senders, signer)
+		if err != nil {
+			fmt.Printf("Failed to set up the ERC20: %v\n", err)
+			os.Exit(1)
+		}
+		if err := loadStartNonces(ctx, bc, senders, *sendTimeoutFlag); err != nil {
+			fmt.Println(err)
+			os.Exit(1)
+		}
+		fmt.Printf("ERC20: %s, every sender minted; txs are transfer(other sender, 1)\n", contract.Hex())
+		mkTx = func(k txKey, s *sender) *types.Transaction {
+			to := senders[(int(k.sender)+1+int(k.nonce)%(len(senders)-1))%len(senders)]
+			return types.NewTransaction(k.nonce, contract, big.NewInt(0), gasLimitERC20, gasPrice, abiCall(selERC20Transfer, to.addr.Bytes(), big.NewInt(1).Bytes()))
+		}
+	}
 	startClock()
 
 	// Metric scrape only makes sense for a bounded run (start/end window to
@@ -540,7 +560,7 @@ func main() {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			sendWorker(bc, sendCh, senders, signer)
+			sendWorker(bc, sendCh, senders, signer, mkTx)
 		}()
 	}
 
@@ -733,11 +753,11 @@ func sendWorker(
 	sendCh <-chan txKey,
 	senders []*sender,
 	signer types.Signer,
+	mkTx func(txKey, *sender) *types.Transaction,
 ) {
 	for k := range sendCh {
 		s := senders[k.sender]
-		tx := types.NewTransaction(k.nonce, s.addr, big.NewInt(1), gasLimitNative, gasPrice, nil)
-		signed, err := types.SignTx(tx, signer, s.key)
+		signed, err := types.SignTx(mkTx(k, s), signer, s.key)
 		if err != nil {
 			fmt.Printf("sign sender %d nonce %d: %v\n", k.sender, k.nonce, err)
 			continue
