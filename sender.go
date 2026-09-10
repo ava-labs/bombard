@@ -222,8 +222,15 @@ func (n *nodeSender) run(ctx context.Context, timeout time.Duration) {
 		wait.Stop()
 		sctx, cancel := context.WithTimeout(ctx, timeout)
 		if err := n.rc.BatchCallContext(sctx, batch); err != nil {
-			sendErrs.Add(uint64(len(batch) - 1))
+			// The whole batch failed (timeout, connection reset): nothing reached
+			// the node. Put every tx back on the queue; dropping them here made
+			// each sender wait for the 20 s resubmit behind a nonce gap ("pool gaps:
+			// nonce N: no record" on the validators).
+			cancel()
+			sendErrs.Add(uint64(len(batch)))
 			noteSendErr(err)
+			n.requeue(ctx, txs)
+			continue
 		}
 		cancel()
 		var again []*types.Transaction
