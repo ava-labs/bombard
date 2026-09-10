@@ -299,7 +299,7 @@ func main() {
 	fanoutFlag := flag.Int("fanout", 0, "Nodes each tx is sent to, round-robin over the -rpc list. 0 = every node (the default, a benchmark artifact: real clients hit one node and gossip carries the rest).")
 	connsFlag := flag.Int("conns", sendConcPerNode, "Sender goroutines (keep-alive connections) per node.")
 	batchWaitFlag := flag.Duration("batchwait", sendBatchWait, "How long a sender collects txs for one batch after the first. Raise it with few -conns so batches fill.")
-	gasHeadroomFlag := flag.Float64("gasheadroom", 1.5, "Multiplier on the node's eth_gasPrice, re-read every second; keeps signed txs above a rising base fee.")
+	gasHeadroomFlag := flag.Float64("gasheadroom", 1.5, "Multiplier on the head block's base fee, re-read every second; keeps signed txs above a rising base fee without feeding the eth_gasPrice oracle.")
 	rps := flag.Int("rps", 1000, "Target transactions issued per second")
 	targetTxs := flag.Uint64("txs", 0, "Stop after at least this many mined txs; 0 means run until interrupted")
 	runDuration := flag.Duration("duration", 0, "Stop after this duration; 0 means run until interrupted or --txs is reached")
@@ -454,8 +454,15 @@ func main() {
 
 	gasPriceP.Store(big.NewInt(minGasPrice))
 	refreshGasPrice := func() {
-		p, err := client.SuggestGasPrice(ctx)
-		if err != nil {
+		// Price off the head's base fee, not eth_gasPrice: that oracle is a
+		// percentile of recent tips, so pricing above it feeds our own tips back
+		// into it (a runaway loop, seen at 1.5 -> 24 gwei across runs).
+		var p *big.Int
+		if h, err := client.HeaderByNumber(ctx, nil); err == nil && h.BaseFee != nil {
+			p = new(big.Int).Set(h.BaseFee)
+		} else if sp, err := client.SuggestGasPrice(ctx); err == nil {
+			p = sp
+		} else {
 			return
 		}
 		p = new(big.Int).Div(new(big.Int).Mul(p, big.NewInt(int64(*gasHeadroomFlag*100))), big.NewInt(100))
