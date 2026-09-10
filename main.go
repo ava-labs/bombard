@@ -290,6 +290,7 @@ func main() {
 	sendersFlag := flag.Int("senders", 1, "Number of issuing accounts. Sender 0 is the root key; the rest are derived from it deterministically and funded by the root when they hold less than half of -fund.")
 	fundFlag := flag.String("fund", "10000000000000000000", "Wei the root sends to each derived sender that holds less than half of it (default 10 coins).")
 	gasLimitFlag := flag.Uint64("gaslimit", gasLimitNative, "Gas limit on native transfers and funding txs. SAE chains reject txs below size*20s*target/1.5MiB.")
+	pollFlag := flag.Duration("poll", pollInterval, "How often each watcher asks its node for the latest block. Every node is polled by its own watcher.")
 	rps := flag.Int("rps", 1000, "Target transactions issued per second")
 	targetTxs := flag.Uint64("txs", 0, "Stop after at least this many mined txs; 0 means run until interrupted")
 	runDuration := flag.Duration("duration", 0, "Stop after this duration; 0 means run until interrupted or --txs is reached")
@@ -417,7 +418,7 @@ func main() {
 	// unreachable at startup is retried until it comes up rather than skipped; the
 	// setup connection below still aborts the run if nothing is reachable at all.
 	for _, ws := range wsURLs {
-		go watchBlocks(ctx, ws, pollInterval)
+		go watchBlocks(ctx, ws, *pollFlag)
 	}
 
 	// Setup connection (chain ID + start nonce): use the first reachable endpoint.
