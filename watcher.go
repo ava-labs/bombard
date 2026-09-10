@@ -128,11 +128,15 @@ func watchBlocks(ctx context.Context, wsURL string, pollInterval time.Duration) 
 			continue
 		}
 
-		for n := lastBlock + 1; n <= num; n++ {
+		// Never skip a block: a mined tx in a skipped block would stay in flight
+		// forever, pin the cap and read as a stall. On a fetch error stop here and
+		// retry from this height on the next pass (redialing if the socket died).
+		n := lastBlock + 1
+		for ; n <= num; n++ {
 			var b blockInfo
 			if n < num {
 				if err := getBlock(client, &b, fmt.Sprintf("0x%x", n)); err != nil {
-					continue
+					break
 				}
 				observedAt = time.Now()
 			} else {
@@ -146,7 +150,14 @@ func watchBlocks(ctx context.Context, wsURL string, pollInterval time.Duration) 
 			}
 		}
 
-		lastBlock = num
+		lastBlock = n - 1 // == num when every block was read
+		if n <= num {
+			client.Close()
+			if client = dial(); client == nil {
+				return
+			}
+			continue
+		}
 		time.Sleep(pollInterval)
 	}
 }
