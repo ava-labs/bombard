@@ -48,7 +48,7 @@ import (
 var gasLimitNative uint64 = 21000
 
 const (
-	minGasPrice    = 25 // floor; gasPrice is raised to the node's suggested price at startup
+	minGasPrice = 25 // floor; gasPrice is raised to the node's suggested price at startup
 )
 
 // gasPriceP is the price every new tx is signed with; a refresh loop follows the

@@ -62,8 +62,8 @@ const (
 type broadcaster struct {
 	nodes   []*nodeSender
 	timeout time.Duration
-	fanout  int           // nodes each tx is queued to; 0 = every eligible node
-	rr      atomic.Uint64 // round-robin start for fanout
+	fanout  int             // nodes each tx is queued to; 0 = every eligible node
+	rr      atomic.Uint64   // round-robin start for fanout
 	done    <-chan struct{} // the run's ctx; a blocked broadcast gives up here at shutdown
 }
 
