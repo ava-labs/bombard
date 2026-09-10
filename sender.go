@@ -124,6 +124,35 @@ func newBroadcaster(ctx context.Context, rpcURLs []string, sendTimeout time.Dura
 // eth_sendRawTransaction). 1 keeps one request per tx; set from -batch.
 var sendBatch = 1
 
+// refused counts sends the node turned away with "txpool is full". The worker
+// backs off refusalPause and re-queues them, so the offered rate follows what
+// the node admits instead of hammering it until the resubmit interval.
+var refused atomic.Uint64
+
+const refusalPause = 100 * time.Millisecond
+
+func poolFull(err error) bool {
+	return err != nil && strings.Contains(strings.ToLower(err.Error()), "full")
+}
+
+// requeue puts refused txs back on this node's queue after a pause; it gives
+// up when the run ends.
+func (n *nodeSender) requeue(ctx context.Context, txs []*types.Transaction) {
+	refused.Add(uint64(len(txs)))
+	select {
+	case <-time.After(refusalPause):
+	case <-ctx.Done():
+		return
+	}
+	for _, tx := range txs {
+		select {
+		case n.queue <- tx:
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
 // run drains the node's queue, sending each tx with a tight per-call timeout and
 // ignoring all errors (already-known, nonce races, a down node, all expected).
 // With sendBatch > 1 a worker takes one tx, then whatever else is queued up to
@@ -138,17 +167,22 @@ func (n *nodeSender) run(ctx context.Context, timeout time.Duration) {
 		}
 		if sendBatch <= 1 {
 			sctx, cancel := context.WithTimeout(ctx, timeout)
-			_ = n.client.SendTransaction(sctx, first)
+			err := n.client.SendTransaction(sctx, first)
 			cancel()
+			if poolFull(err) {
+				n.requeue(ctx, []*types.Transaction{first})
+			}
 			continue
 		}
 		batch := make([]rpc.BatchElem, 0, sendBatch)
+		txs := make([]*types.Transaction, 0, sendBatch)
 		add := func(tx *types.Transaction) {
 			raw, err := tx.MarshalBinary()
 			if err != nil {
 				return
 			}
 			batch = append(batch, rpc.BatchElem{Method: "eth_sendRawTransaction", Args: []any{hexutil.Bytes(raw)}, Result: new(common.Hash)})
+			txs = append(txs, tx)
 		}
 		add(first)
 		wait := time.NewTimer(time.Millisecond)
@@ -168,6 +202,15 @@ func (n *nodeSender) run(ctx context.Context, timeout time.Duration) {
 		sctx, cancel := context.WithTimeout(ctx, timeout)
 		_ = n.rc.BatchCallContext(sctx, batch)
 		cancel()
+		var again []*types.Transaction
+		for i, el := range batch {
+			if poolFull(el.Error) {
+				again = append(again, txs[i])
+			}
+		}
+		if len(again) > 0 {
+			n.requeue(ctx, again)
+		}
 	}
 }
 
