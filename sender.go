@@ -17,12 +17,17 @@ import (
 	"github.com/ava-labs/libevm/rpc"
 )
 
+// sendConcPerNode is the number of sender goroutines (and thus the cap on
+// concurrent keep-alive connections) per node; -conns overrides it. With
+// batching, many workers split the stream into tiny batches (64 workers at 14k
+// tx/s per node gave 6-tx batches), so use few workers and a longer -batchwait.
+var sendConcPerNode = 64
+
+// sendBatchWait is how long a worker collects more txs for a batch after the
+// first one; -batchwait overrides it.
+var sendBatchWait = time.Millisecond
+
 const (
-	// sendConcPerNode is the number of sender goroutines (and thus the cap on
-	// concurrent keep-alive connections) per node. Sized to sustain the target
-	// rps to a single node at healthy latency with headroom; capped so we reuse
-	// connections instead of churning ephemeral ports / hitting fd limits.
-	sendConcPerNode = 64
 	// sendQueueLen is the per-node buffered queue depth. A dead or slow node
 	// fills its queue and then drops, it never blocks the issuer or other
 	// nodes. Resubmission and the other nodes cover the dropped sends.
@@ -158,7 +163,7 @@ func (n *nodeSender) requeue(ctx context.Context, txs []*types.Transaction) {
 // run drains the node's queue, sending each tx with a tight per-call timeout and
 // ignoring all errors (already-known, nonce races, a down node, all expected).
 // With sendBatch > 1 a worker takes one tx, then whatever else is queued up to
-// the batch size (waiting at most a millisecond), and posts them as one batch.
+// the batch size (waiting at most sendBatchWait), and posts them as one batch.
 func (n *nodeSender) run(ctx context.Context, timeout time.Duration) {
 	for {
 		var first *types.Transaction
@@ -187,7 +192,7 @@ func (n *nodeSender) run(ctx context.Context, timeout time.Duration) {
 			txs = append(txs, tx)
 		}
 		add(first)
-		wait := time.NewTimer(time.Millisecond)
+		wait := time.NewTimer(sendBatchWait)
 	fill:
 		for len(batch) < sendBatch {
 			select {

@@ -292,6 +292,8 @@ func main() {
 	gasLimitFlag := flag.Uint64("gaslimit", gasLimitNative, "Gas limit on native transfers and funding txs. SAE chains reject txs below size*20s*target/1.5MiB.")
 	pollFlag := flag.Duration("poll", pollInterval, "How often each watcher asks its node for the latest block. Every node is polled by its own watcher.")
 	fanoutFlag := flag.Int("fanout", 0, "Nodes each tx is sent to, round-robin over the -rpc list. 0 = every node (the default, a benchmark artifact: real clients hit one node and gossip carries the rest).")
+	connsFlag := flag.Int("conns", sendConcPerNode, "Sender goroutines (keep-alive connections) per node.")
+	batchWaitFlag := flag.Duration("batchwait", sendBatchWait, "How long a sender collects txs for one batch after the first. Raise it with few -conns so batches fill.")
 	rps := flag.Int("rps", 1000, "Target transactions issued per second")
 	targetTxs := flag.Uint64("txs", 0, "Stop after at least this many mined txs; 0 means run until interrupted")
 	runDuration := flag.Duration("duration", 0, "Stop after this duration; 0 means run until interrupted or --txs is reached")
@@ -304,6 +306,7 @@ func main() {
 	sampleFlag := flag.Duration("sample", 0, "If >0, scrape a focused set of rate/gauge node metrics every interval (e.g. 1s) and print compact SAMPLE rows. Forces -tui=false. Reveals per-second dynamics the begin/end panel hides.")
 	flag.Parse()
 	gasLimitNative = *gasLimitFlag
+	sendConcPerNode = *connsFlag
 
 	if *rps <= 0 {
 		fmt.Println("--rps must be > 0")
@@ -331,6 +334,7 @@ func main() {
 	}
 	if *batchFlag >= 1 {
 		sendBatch = *batchFlag
+		sendBatchWait = *batchWaitFlag
 	}
 	if *sendersFlag < 1 {
 		fmt.Println("--senders must be >= 1")
