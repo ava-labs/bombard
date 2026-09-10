@@ -171,33 +171,6 @@ func (t *tracker) dueForResubmit(interval time.Duration, now time.Time) []*types
 	return out
 }
 
-// lowestPerSender returns, per sender, the signed tx with the smallest nonce
-// still in flight: the one the chain must mine next, so the only one whose
-// loss stalls that sender. Re-sending just these every second fills a nonce
-// gap long before the full resubmit interval, at 1 send per sender.
-func (t *tracker) lowestPerSender(now time.Time) []*types.Transaction {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	low := make(map[uint32]txKey)
-	for k := range t.inflight {
-		if cur, ok := low[k.sender]; !ok || k.nonce < cur.nonce {
-			low[k.sender] = k
-		}
-	}
-	out := make([]*types.Transaction, 0, len(low))
-	for _, k := range low {
-		st := t.inflight[k]
-		if now.Sub(st.lastSend) < time.Second {
-			continue
-		}
-		st.lastSend = now
-		st.resubmits++
-		out = append(out, st.signed)
-	}
-	t.resent.Add(uint64(len(out)))
-	return out
-}
-
 var track = newTracker()
 
 // defaultActiveRPCsFile lists the RPC URLs of the data center that currently holds
@@ -770,25 +743,16 @@ func sendWorker(
 }
 
 func resubmitLoop(ctx context.Context, bc *broadcaster, interval time.Duration) {
-	ticker := time.NewTicker(time.Second)
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
-	last := time.Now()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
 		}
-		now := time.Now()
-		// Gap filler every second, full resubmit every interval.
-		for _, signed := range track.lowestPerSender(now) {
+		for _, signed := range track.dueForResubmit(interval, time.Now()) {
 			bc.broadcast(signed)
-		}
-		if now.Sub(last) >= interval {
-			last = now
-			for _, signed := range track.dueForResubmit(interval, now) {
-				bc.broadcast(signed)
-			}
 		}
 	}
 }
