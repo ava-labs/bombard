@@ -43,8 +43,11 @@ import (
 // hash) to survive mempool loss from node overload or a crash. "already known"
 // / "nonce too low" send errors are benign no-ops.
 
+// gasLimitNative is the gas limit on native transfers and funding txs; -gaslimit overrides it
+// (SAE admits a tx only if gasLimit >= size * 20s*target / 1.5MiB, ~670k at a 500M gas/s target).
+var gasLimitNative uint64 = 21000
+
 const (
-	gasLimitNative = 21000
 	minGasPrice    = 25 // floor; gasPrice is raised to the node's suggested price at startup
 )
 
@@ -286,6 +289,7 @@ func main() {
 	erc20Flag := flag.Bool("erc20", false, "Send ERC20 transfers instead of native value: the root deploys the token and mints every sender a balance at startup; each tx is transfer(other sender, 1).")
 	sendersFlag := flag.Int("senders", 1, "Number of issuing accounts. Sender 0 is the root key; the rest are derived from it deterministically and funded by the root when they hold less than half of -fund.")
 	fundFlag := flag.String("fund", "10000000000000000000", "Wei the root sends to each derived sender that holds less than half of it (default 10 coins).")
+	gasLimitFlag := flag.Uint64("gaslimit", gasLimitNative, "Gas limit on native transfers and funding txs. SAE chains reject txs below size*20s*target/1.5MiB.")
 	rps := flag.Int("rps", 1000, "Target transactions issued per second")
 	targetTxs := flag.Uint64("txs", 0, "Stop after at least this many mined txs; 0 means run until interrupted")
 	runDuration := flag.Duration("duration", 0, "Stop after this duration; 0 means run until interrupted or --txs is reached")
@@ -297,6 +301,7 @@ func main() {
 	scrapeFlag := flag.String("scrape", "", "Comma-separated RPC URLs to scrape /ext/metrics from at run start/end (decoupled from -rpc). Empty = scrape the -rpc nodes. Lets you send to the tracker but observe every validator.")
 	sampleFlag := flag.Duration("sample", 0, "If >0, scrape a focused set of rate/gauge node metrics every interval (e.g. 1s) and print compact SAMPLE rows. Forces -tui=false. Reveals per-second dynamics the begin/end panel hides.")
 	flag.Parse()
+	gasLimitNative = *gasLimitFlag
 
 	if *rps <= 0 {
 		fmt.Println("--rps must be > 0")
