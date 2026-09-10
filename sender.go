@@ -55,6 +55,7 @@ const (
 type broadcaster struct {
 	nodes   []*nodeSender
 	timeout time.Duration
+	done    <-chan struct{} // the run's ctx; a blocked broadcast gives up here at shutdown
 }
 
 type nodeSender struct {
@@ -87,7 +88,7 @@ func newBroadcaster(ctx context.Context, rpcURLs []string, sendTimeout time.Dura
 	}
 	httpClient := &http.Client{Transport: tr} // no client-level timeout: per-call ctx bounds each send
 
-	b := &broadcaster{timeout: sendTimeout}
+	b := &broadcaster{timeout: sendTimeout, done: ctx.Done()}
 	for _, url := range rpcURLs {
 		rc, err := rpc.DialOptions(ctx, url, rpc.WithHTTPClient(httpClient))
 		if err != nil {
@@ -191,7 +192,10 @@ func (b *broadcaster) broadcast(signed *types.Transaction) {
 		// Every eligible node is saturated: the offered rate is above what the
 		// nodes admit. Block here so the issuer feels the backpressure instead
 		// of losing the tx, which would leave this sender behind a nonce gap.
-		first.queue <- signed
+		select {
+		case first.queue <- signed:
+		case <-b.done:
+		}
 	}
 }
 
