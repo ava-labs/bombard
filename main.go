@@ -51,7 +51,12 @@ const (
 	minGasPrice    = 25 // floor; gasPrice is raised to the node's suggested price at startup
 )
 
-var gasPrice = big.NewInt(minGasPrice)
+// gasPriceP is the price every new tx is signed with; a refresh loop follows the
+// node's eth_gasPrice so a rising base fee (ACP-176 after over-target blocks)
+// cannot strand the whole in-flight window under the fee floor.
+var gasPriceP atomic.Pointer[big.Int]
+
+func gasPrice() *big.Int { return gasPriceP.Load() }
 
 type txState struct {
 	signed    *types.Transaction
@@ -294,6 +299,7 @@ func main() {
 	fanoutFlag := flag.Int("fanout", 0, "Nodes each tx is sent to, round-robin over the -rpc list. 0 = every node (the default, a benchmark artifact: real clients hit one node and gossip carries the rest).")
 	connsFlag := flag.Int("conns", sendConcPerNode, "Sender goroutines (keep-alive connections) per node.")
 	batchWaitFlag := flag.Duration("batchwait", sendBatchWait, "How long a sender collects txs for one batch after the first. Raise it with few -conns so batches fill.")
+	gasHeadroomFlag := flag.Float64("gasheadroom", 1.5, "Multiplier on the node's eth_gasPrice, re-read every second; keeps signed txs above a rising base fee.")
 	rps := flag.Int("rps", 1000, "Target transactions issued per second")
 	targetTxs := flag.Uint64("txs", 0, "Stop after at least this many mined txs; 0 means run until interrupted")
 	runDuration := flag.Duration("duration", 0, "Stop after this duration; 0 means run until interrupted or --txs is reached")
@@ -446,10 +452,31 @@ func main() {
 	defer setupRPC.Close()
 	client := ethclient.NewClient(setupRPC)
 
-	if p, err := client.SuggestGasPrice(ctx); err == nil && p.Cmp(gasPrice) > 0 {
-		gasPrice = p
+	gasPriceP.Store(big.NewInt(minGasPrice))
+	refreshGasPrice := func() {
+		p, err := client.SuggestGasPrice(ctx)
+		if err != nil {
+			return
+		}
+		p = new(big.Int).Div(new(big.Int).Mul(p, big.NewInt(int64(*gasHeadroomFlag*100))), big.NewInt(100))
+		if p.Cmp(big.NewInt(minGasPrice)) > 0 {
+			gasPriceP.Store(p)
+		}
 	}
-	fmt.Printf("Gas price: %s wei\n", gasPrice)
+	refreshGasPrice()
+	fmt.Printf("Gas price: %s wei (refreshed every second, headroom x%.2f)\n", gasPrice(), *gasHeadroomFlag)
+	go func() {
+		t := time.NewTicker(time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				refreshGasPrice()
+			}
+		}
+	}()
 	chainID, err := client.NetworkID(ctx)
 	if err != nil {
 		fmt.Printf("Failed to get chain ID: %v\n", err)
@@ -499,7 +526,7 @@ func main() {
 	}
 	fmt.Printf("Sender 0: %s  start nonce: %d (max accepted across %d node(s))\n", address.Hex(), senders[0].nextNonce, len(bc.nodes))
 	mkTx := func(k txKey, s *sender) *types.Transaction {
-		return types.NewTransaction(k.nonce, s.addr, big.NewInt(1), gasLimitNative, gasPrice, nil)
+		return types.NewTransaction(k.nonce, s.addr, big.NewInt(1), gasLimitNative, gasPrice(), nil)
 	}
 	if *erc20Flag {
 		contract, err := setupERC20(ctx, client, bc, senders, signer)
@@ -514,7 +541,7 @@ func main() {
 		fmt.Printf("ERC20: %s, every sender minted; txs are transfer(other sender, 1)\n", contract.Hex())
 		mkTx = func(k txKey, s *sender) *types.Transaction {
 			to := senders[(int(k.sender)+1+int(k.nonce)%(len(senders)-1))%len(senders)]
-			return types.NewTransaction(k.nonce, contract, big.NewInt(0), gasLimitERC20, gasPrice, abiCall(selERC20Transfer, to.addr.Bytes(), big.NewInt(1).Bytes()))
+			return types.NewTransaction(k.nonce, contract, big.NewInt(0), gasLimitERC20, gasPrice(), abiCall(selERC20Transfer, to.addr.Bytes(), big.NewInt(1).Bytes()))
 		}
 	}
 	startClock()

@@ -98,7 +98,7 @@ func fundSenders(ctx context.Context, client *ethclient.Client, bc *broadcaster,
 		return 0, fmt.Errorf("root %s holds %s wei, funding %d senders needs %s", root.addr.Hex(), bal, len(need), total)
 	}
 	for _, s := range need {
-		tx := types.NewTransaction(nonce, s.addr, amount, gasLimitNative, gasPrice, nil)
+		tx := types.NewTransaction(nonce, s.addr, amount, gasLimitNative, gasPrice(), nil)
 		signed, err := types.SignTx(tx, signer, root.key)
 		if err != nil {
 			return 0, err

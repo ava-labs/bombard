@@ -45,7 +45,7 @@ func setupERC20(ctx context.Context, client *ethclient.Client, bc *broadcaster, 
 	}
 	contract := crypto.CreateAddress(root.addr, nonce)
 	init := append(common.FromHex(tokenBin), abiCall("", root.addr.Bytes(), big.NewInt(0).Bytes())...)
-	deploy, err := types.SignTx(types.NewContractCreation(nonce, big.NewInt(0), gasLimitDeploy, gasPrice, init), signer, root.key)
+	deploy, err := types.SignTx(types.NewContractCreation(nonce, big.NewInt(0), gasLimitDeploy, gasPrice(), init), signer, root.key)
 	if err != nil {
 		return common.Address{}, err
 	}
@@ -53,7 +53,7 @@ func setupERC20(ctx context.Context, client *ethclient.Client, bc *broadcaster, 
 	nonce++
 	amount := new(big.Int).Lsh(big.NewInt(1), 62).Bytes()
 	for _, s := range senders {
-		tx := types.NewTransaction(nonce, contract, big.NewInt(0), gasLimitMint, gasPrice, abiCall(selERC20Mint, s.addr.Bytes(), amount))
+		tx := types.NewTransaction(nonce, contract, big.NewInt(0), gasLimitMint, gasPrice(), abiCall(selERC20Mint, s.addr.Bytes(), amount))
 		signed, err := types.SignTx(tx, signer, root.key)
 		if err != nil {
 			return common.Address{}, err
