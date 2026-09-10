@@ -353,7 +353,11 @@ func main() {
 		os.Exit(signalExitCode(sig))
 	}()
 
-	if *runDuration > 0 {
+	// The duration clock starts once setup (funding, nonces) is done: see startClock.
+	startClock := func() {
+		if *runDuration <= 0 {
+			return
+		}
 		go func() {
 			timer := time.NewTimer(*runDuration)
 			defer timer.Stop()
@@ -479,6 +483,7 @@ func main() {
 		os.Exit(1)
 	}
 	fmt.Printf("Sender 0: %s  start nonce: %d (max accepted across %d node(s))\n", address.Hex(), senders[0].nextNonce, len(bc.nodes))
+	startClock()
 
 	// Metric scrape only makes sense for a bounded run (start/end window to
 	// subtract over). Scrape targets default to the send nodes but can be set
