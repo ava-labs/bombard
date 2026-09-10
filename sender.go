@@ -10,6 +10,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/ava-labs/libevm/common"
+	"github.com/ava-labs/libevm/common/hexutil"
 	"github.com/ava-labs/libevm/core/types"
 	"github.com/ava-labs/libevm/ethclient"
 	"github.com/ava-labs/libevm/rpc"
@@ -60,6 +62,7 @@ type broadcaster struct {
 
 type nodeSender struct {
 	url     string
+	rc      *rpc.Client
 	client  *ethclient.Client
 	queue   chan *types.Transaction
 	healthy atomic.Bool // in send rotation while within ingressDropBehind of tip
@@ -98,6 +101,7 @@ func newBroadcaster(ctx context.Context, rpcURLs []string, sendTimeout time.Dura
 		}
 		ns := &nodeSender{
 			url:    url,
+			rc:     rc,
 			client: ethclient.NewClient(rc),
 			queue:  make(chan *types.Transaction, sendQueueLen),
 		}
@@ -116,18 +120,54 @@ func newBroadcaster(ctx context.Context, rpcURLs []string, sendTimeout time.Dura
 	return b, nil
 }
 
+// sendBatch is how many txs one HTTP request carries (a JSON-RPC batch of
+// eth_sendRawTransaction). 1 keeps one request per tx; set from -batch.
+var sendBatch = 1
+
 // run drains the node's queue, sending each tx with a tight per-call timeout and
 // ignoring all errors (already-known, nonce races, a down node, all expected).
+// With sendBatch > 1 a worker takes one tx, then whatever else is queued up to
+// the batch size (waiting at most a millisecond), and posts them as one batch.
 func (n *nodeSender) run(ctx context.Context, timeout time.Duration) {
 	for {
+		var first *types.Transaction
 		select {
 		case <-ctx.Done():
 			return
-		case tx := <-n.queue:
-			sctx, cancel := context.WithTimeout(ctx, timeout)
-			_ = n.client.SendTransaction(sctx, tx)
-			cancel()
+		case first = <-n.queue:
 		}
+		if sendBatch <= 1 {
+			sctx, cancel := context.WithTimeout(ctx, timeout)
+			_ = n.client.SendTransaction(sctx, first)
+			cancel()
+			continue
+		}
+		batch := make([]rpc.BatchElem, 0, sendBatch)
+		add := func(tx *types.Transaction) {
+			raw, err := tx.MarshalBinary()
+			if err != nil {
+				return
+			}
+			batch = append(batch, rpc.BatchElem{Method: "eth_sendRawTransaction", Args: []any{hexutil.Bytes(raw)}, Result: new(common.Hash)})
+		}
+		add(first)
+		wait := time.NewTimer(time.Millisecond)
+	fill:
+		for len(batch) < sendBatch {
+			select {
+			case tx := <-n.queue:
+				add(tx)
+			case <-wait.C:
+				break fill
+			case <-ctx.Done():
+				wait.Stop()
+				return
+			}
+		}
+		wait.Stop()
+		sctx, cancel := context.WithTimeout(ctx, timeout)
+		_ = n.rc.BatchCallContext(sctx, batch)
+		cancel()
 	}
 }
 

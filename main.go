@@ -282,6 +282,7 @@ const (
 func main() {
 	rpcFlag := flag.String("rpc", "", "Comma-separated RPC URLs (required). Sends fan out across all; watchers race across all.")
 	keyFlag := flag.String("key", "", "Path to the root private key: a file holding exactly 64 hex characters (required). Sender 0; it must be funded or the run mines nothing.")
+	batchFlag := flag.Int("batch", 1, "Txs per HTTP request to a node: a JSON-RPC batch of eth_sendRawTransaction. 1 = one request per tx.")
 	sendersFlag := flag.Int("senders", 1, "Number of issuing accounts. Sender 0 is the root key; the rest are derived from it deterministically and funded by the root when they hold less than half of -fund.")
 	fundFlag := flag.String("fund", "10000000000000000000", "Wei the root sends to each derived sender that holds less than half of it (default 10 coins).")
 	rps := flag.Int("rps", 1000, "Target transactions issued per second")
@@ -319,6 +320,9 @@ func main() {
 	if err != nil {
 		fmt.Printf("Failed to load the issuer key: %v\n", err)
 		os.Exit(1)
+	}
+	if *batchFlag >= 1 {
+		sendBatch = *batchFlag
 	}
 	if *sendersFlag < 1 {
 		fmt.Println("--senders must be >= 1")
