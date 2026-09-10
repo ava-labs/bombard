@@ -57,6 +57,8 @@ const (
 type broadcaster struct {
 	nodes   []*nodeSender
 	timeout time.Duration
+	fanout  int           // nodes each tx is queued to; 0 = every eligible node
+	rr      atomic.Uint64 // round-robin start for fanout
 	done    <-chan struct{} // the run's ctx; a blocked broadcast gives up here at shutdown
 }
 
@@ -254,24 +256,29 @@ func (b *broadcaster) broadcast(signed *types.Transaction) {
 			return true
 		}
 	}
-	delivered := false
+	delivered := 0
 	var first *nodeSender
-	for _, n := range b.nodes {
+	start := int(b.rr.Add(1) % uint64(len(b.nodes)))
+	for i := range b.nodes {
+		n := b.nodes[(start+i)%len(b.nodes)]
 		if !eligible(n) {
 			continue
+		}
+		if b.fanout > 0 && delivered >= b.fanout {
+			break
 		}
 		if first == nil {
 			first = n
 		}
 		select {
 		case n.queue <- signed:
-			delivered = true
+			delivered++
 		default:
 			// This node is saturated or down; skip it as long as another one
 			// takes the tx.
 		}
 	}
-	if !delivered && first != nil {
+	if delivered == 0 && first != nil {
 		// Every eligible node is saturated: the offered rate is above what the
 		// nodes admit. Block here so the issuer feels the backpressure instead
 		// of losing the tx, which would leave this sender behind a nonce gap.

@@ -291,6 +291,7 @@ func main() {
 	fundFlag := flag.String("fund", "10000000000000000000", "Wei the root sends to each derived sender that holds less than half of it (default 10 coins).")
 	gasLimitFlag := flag.Uint64("gaslimit", gasLimitNative, "Gas limit on native transfers and funding txs. SAE chains reject txs below size*20s*target/1.5MiB.")
 	pollFlag := flag.Duration("poll", pollInterval, "How often each watcher asks its node for the latest block. Every node is polled by its own watcher.")
+	fanoutFlag := flag.Int("fanout", 0, "Nodes each tx is sent to, round-robin over the -rpc list. 0 = every node (the default, a benchmark artifact: real clients hit one node and gossip carries the rest).")
 	rps := flag.Int("rps", 1000, "Target transactions issued per second")
 	targetTxs := flag.Uint64("txs", 0, "Stop after at least this many mined txs; 0 means run until interrupted")
 	runDuration := flag.Duration("duration", 0, "Stop after this duration; 0 means run until interrupted or --txs is reached")
@@ -403,6 +404,9 @@ func main() {
 	// keep-alive transport (connections reused, not churned). A down or slow
 	// node is dropped per-tx and never blocks the issuer or the healthy nodes.
 	bc, err := newBroadcaster(ctx, rpcURLs, *sendTimeoutFlag)
+	if err == nil {
+		bc.fanout = *fanoutFlag
+	}
 	if err != nil {
 		fmt.Printf("Failed to start broadcaster: %v\n", err)
 		os.Exit(1)
