@@ -130,8 +130,10 @@ func (n *nodeSender) run(ctx context.Context, timeout time.Duration) {
 	}
 }
 
-// broadcast enqueues signed to every node, non-blocking: if a node's queue is
-// full (it is down or lagging) the send is dropped for that node only.
+// broadcast enqueues signed to every eligible node. A full queue (that node is
+// down or lagging) is skipped as long as another node takes the tx; when every
+// eligible queue is full the call blocks, so the offered rate can never drop a
+// tx and strand its sender behind a nonce gap.
 func (b *broadcaster) broadcast(signed *types.Transaction) {
 	// Pick the send pool in priority order. Sequential-nonce issuance must land on an
 	// endpoint AT THE TIP: a tx whose nonce is above a behind endpoint's accepted
@@ -168,16 +170,28 @@ func (b *broadcaster) broadcast(signed *types.Transaction) {
 			return true
 		}
 	}
+	delivered := false
+	var first *nodeSender
 	for _, n := range b.nodes {
 		if !eligible(n) {
 			continue
 		}
+		if first == nil {
+			first = n
+		}
 		select {
 		case n.queue <- signed:
+			delivered = true
 		default:
-			// Node is saturated/down; drop. Other nodes still get it and the
-			// resubmit loop will retry.
+			// This node is saturated or down; skip it as long as another one
+			// takes the tx.
 		}
+	}
+	if !delivered && first != nil {
+		// Every eligible node is saturated: the offered rate is above what the
+		// nodes admit. Block here so the issuer feels the backpressure instead
+		// of losing the tx, which would leave this sender behind a nonce gap.
+		first.queue <- signed
 	}
 }
 
