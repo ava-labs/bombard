@@ -2,10 +2,8 @@ package main
 
 import (
 	"context"
-	"crypto/ecdsa"
 	"flag"
 	"fmt"
-	"math"
 	"math/big"
 	"os"
 	"os/signal"
@@ -64,8 +62,8 @@ type txState struct {
 // the maps and latSince are guarded by mu.
 type tracker struct {
 	mu       sync.Mutex
-	inflight map[uint64]*txState    // nonce -> state, present until mined
-	byHash   map[common.Hash]uint64 // tx hash -> nonce, for the watcher
+	inflight map[txKey]*txState    // (sender, nonce) -> state, present until mined
+	byHash   map[common.Hash]txKey // tx hash -> key, for the watcher
 
 	issued  atomic.Uint64 // nonces released by the issuer
 	mined   atomic.Uint64 // nonces observed in a block
@@ -77,30 +75,30 @@ type tracker struct {
 
 func newTracker() *tracker {
 	return &tracker{
-		inflight: make(map[uint64]*txState),
-		byHash:   make(map[common.Hash]uint64),
+		inflight: make(map[txKey]*txState),
+		byHash:   make(map[common.Hash]txKey),
 	}
 }
 
 // register records a freshly-issued tx. issued is bumped by the issuer (so the
 // cap is accurate even while a tx waits in the send queue); register only fills
 // the map so the watcher and resubmitter can find it.
-func (t *tracker) register(nonce uint64, st *txState) {
+func (t *tracker) register(k txKey, st *txState) {
 	t.mu.Lock()
-	t.inflight[nonce] = st
-	t.byHash[st.signed.Hash()] = nonce
+	t.inflight[k] = st
+	t.byHash[st.signed.Hash()] = k
 	t.mu.Unlock()
 }
 
 func (t *tracker) onMined(hash common.Hash, observedAt time.Time) {
 	t.mu.Lock()
-	nonce, ok := t.byHash[hash]
+	k, ok := t.byHash[hash]
 	if !ok {
 		t.mu.Unlock()
 		return
 	}
-	st := t.inflight[nonce]
-	delete(t.inflight, nonce)
+	st := t.inflight[k]
+	delete(t.inflight, k)
 	delete(t.byHash, hash)
 
 	total := observedAt.Sub(st.firstSend)
@@ -120,33 +118,38 @@ func (t *tracker) inFlight() uint64 {
 	return t.issued.Load() - t.mined.Load() - t.dropped.Load()
 }
 
-// lowestInflightNonce returns the smallest nonce still in flight, and whether any
-// exist. The chain must mine exactly this nonce next; if its frontier sits BELOW
-// this, our in-flight set is stranded above an unfillable gap (see monitorNonce).
-func (t *tracker) lowestInflightNonce() (uint64, bool) {
+// lowestInflight returns, per sender with work in flight, the smallest nonce
+// still in flight. The chain must mine exactly that nonce next for that sender;
+// if its frontier sits BELOW it, the sender's in-flight set is stranded above an
+// unfillable gap (see monitorNonce).
+func (t *tracker) lowestInflight() map[uint32]uint64 {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if len(t.inflight) == 0 {
-		return 0, false
-	}
-	min := uint64(math.MaxUint64)
-	for n := range t.inflight {
-		if n < min {
-			min = n
+	out := make(map[uint32]uint64)
+	for k := range t.inflight {
+		if low, ok := out[k.sender]; !ok || k.nonce < low {
+			out[k.sender] = k.nonce
 		}
 	}
-	return min, true
+	return out
 }
 
-// dropInflight abandons every in-flight tx (used on a nonce resync after a frontier
-// regression) and accounts for them as dropped so the in-flight cap unblocks and
-// the resubmit loop stops re-sending the stranded set. Returns how many were dropped.
-func (t *tracker) dropInflight() int {
+// dropInflight abandons every in-flight tx of the given senders (all senders when
+// the set is nil) after a frontier regression, and accounts for them as dropped so
+// the in-flight cap unblocks and the resubmit loop stops re-sending the stranded
+// set. Returns how many were dropped.
+func (t *tracker) dropInflight(senders map[uint32]bool) int {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	n := len(t.inflight)
-	t.inflight = make(map[uint64]*txState)
-	t.byHash = make(map[common.Hash]uint64)
+	n := 0
+	for k, st := range t.inflight {
+		if senders != nil && !senders[k.sender] {
+			continue
+		}
+		delete(t.inflight, k)
+		delete(t.byHash, st.signed.Hash())
+		n++
+	}
 	t.dropped.Add(uint64(n))
 	return n
 }
@@ -237,13 +240,32 @@ func watchActiveRPCs(ctx context.Context, b *broadcaster, path string) {
 	}
 }
 
-// resyncPending/resyncTarget let monitorNonce ask the issuer to jump to a live
-// frontier nonce after a failover/reorg strands our in-flight nonces above the
-// chain. The monitor sets the target, then the flag; the issuer consumes both.
+// resyncs lets monitorNonce ask the issuer to jump senders to their live
+// frontier nonce after a failover/reorg strands their in-flight nonces above
+// the chain. The monitor fills the map; the issuer drains it.
 var (
-	resyncPending atomic.Bool
-	resyncTarget  atomic.Uint64
+	resyncMu sync.Mutex
+	resyncs  = map[uint32]uint64{} // sender -> frontier nonce
 )
+
+func requestResync(targets map[uint32]uint64) {
+	resyncMu.Lock()
+	for s, n := range targets {
+		resyncs[s] = n
+	}
+	resyncMu.Unlock()
+}
+
+func takeResyncs() map[uint32]uint64 {
+	resyncMu.Lock()
+	defer resyncMu.Unlock()
+	if len(resyncs) == 0 {
+		return nil
+	}
+	out := resyncs
+	resyncs = map[uint32]uint64{}
+	return out
+}
 
 const (
 	// in-flight cap = rps / inflightDivisor nonces ahead of last-mined. A
@@ -259,7 +281,9 @@ const (
 
 func main() {
 	rpcFlag := flag.String("rpc", "", "Comma-separated RPC URLs (required). Sends fan out across all; watchers race across all.")
-	keyFlag := flag.String("key", "", "Path to the issuer private key: a file holding exactly 64 hex characters (required). The account must be funded or the run mines nothing.")
+	keyFlag := flag.String("key", "", "Path to the root private key: a file holding exactly 64 hex characters (required). Sender 0; it must be funded or the run mines nothing.")
+	sendersFlag := flag.Int("senders", 1, "Number of issuing accounts. Sender 0 is the root key; the rest are derived from it deterministically and funded by the root when they hold less than half of -fund.")
+	fundFlag := flag.String("fund", "10000000000000000000", "Wei the root sends to each derived sender that holds less than half of it (default 10 coins).")
 	rps := flag.Int("rps", 1000, "Target transactions issued per second")
 	targetTxs := flag.Uint64("txs", 0, "Stop after at least this many mined txs; 0 means run until interrupted")
 	runDuration := flag.Duration("duration", 0, "Stop after this duration; 0 means run until interrupted or --txs is reached")
@@ -296,6 +320,16 @@ func main() {
 		fmt.Printf("Failed to load the issuer key: %v\n", err)
 		os.Exit(1)
 	}
+	if *sendersFlag < 1 {
+		fmt.Println("--senders must be >= 1")
+		os.Exit(1)
+	}
+	fundAmount, ok := new(big.Int).SetString(*fundFlag, 10)
+	if !ok || fundAmount.Sign() <= 0 {
+		fmt.Println("--fund must be a positive integer in wei")
+		os.Exit(1)
+	}
+	senders := deriveSenders(privateKey, *sendersFlag)
 	wsURLs := make([]string, len(rpcURLs))
 	for i, u := range rpcURLs {
 		wsURLs[i] = httpRPCToWS(u)
@@ -416,34 +450,31 @@ func main() {
 	fmt.Printf("Issuer: %s (balance %s)\n", address.Hex(), balance)
 	signer := types.NewEIP155Signer(chainID)
 
-	// Read the start nonce as the real ACCEPTED (latest-block) nonce, MAX across
-	// all nodes. We deliberately use NonceAt(latest), NOT PendingNonceAt: the
-	// pending nonce counts mempool txs, so leftover in-flight txs from a previous
-	// run inflate it ABOVE a gap and a fresh run would issue past the missing
-	// nonce, stranding the account behind an unfilled gap. The accepted nonce is
-	// the true chain frontier and can never skip a gap; re-issuing from there is
-	// safe because every tx is idempotent (deterministic signing -> same hash)
-	// and a re-sent already-known/already-mined nonce is a benign no-op. MAX
-	// ignores a lagging spare that reports a stale-low accepted nonce.
-	var startNonce uint64
-	gotNonce := false
-	for _, n := range bc.nodes {
-		nctx, ncancel := context.WithTimeout(ctx, *sendTimeoutFlag)
-		nn, nerr := n.client.NonceAt(nctx, address, nil) // nil = latest accepted block
-		ncancel()
-		if nerr != nil {
-			continue
+	// Derived senders get funded by the root when they hold less than half of
+	// -fund; a rerun with the same key finds them funded and skips this.
+	if len(senders) > 1 {
+		funded, err := fundSenders(ctx, client, bc, senders, signer, fundAmount)
+		if err != nil {
+			fmt.Printf("Failed to fund senders: %v\n", err)
+			os.Exit(1)
 		}
-		gotNonce = true
-		if nn > startNonce {
-			startNonce = nn
-		}
+		fmt.Printf("Senders: %d (root %s), funded %d with %s wei each\n", len(senders), address.Hex(), funded, fundAmount)
 	}
-	if !gotNonce {
-		fmt.Println("Failed to get nonce from any node")
+
+	// Every sender's start nonce is its real ACCEPTED (latest-block) nonce, MAX
+	// across all nodes. We deliberately use NonceAt(latest), NOT PendingNonceAt:
+	// the pending nonce counts mempool txs, so leftover in-flight txs from a
+	// previous run inflate it ABOVE a gap and a fresh run would issue past the
+	// missing nonce, stranding the account behind an unfilled gap. The accepted
+	// nonce is the true chain frontier and can never skip a gap; re-issuing from
+	// there is safe because every tx is idempotent (deterministic signing -> same
+	// hash) and a re-sent already-known/already-mined nonce is a benign no-op. MAX
+	// ignores a lagging spare that reports a stale-low accepted nonce.
+	if err := loadStartNonces(ctx, bc, senders, *sendTimeoutFlag); err != nil {
+		fmt.Println(err)
 		os.Exit(1)
 	}
-	fmt.Printf("Issuer: %s  start nonce: %d (max accepted across %d node(s))\n", address.Hex(), startNonce, len(bc.nodes))
+	fmt.Printf("Sender 0: %s  start nonce: %d (max accepted across %d node(s))\n", address.Hex(), senders[0].nextNonce, len(bc.nodes))
 
 	// Metric scrape only makes sense for a bounded run (start/end window to
 	// subtract over). Scrape targets default to the send nodes but can be set
@@ -488,25 +519,25 @@ func main() {
 	if *overshootFlag > 0 {
 		overshootNote = fmt.Sprintf(" (+%.1f%% overshoot)", *overshootFlag*100)
 	}
-	fmt.Printf("\nSingle issuer: target %d rps%s, in-flight cap %d nonces, resubmit after %s\n\n",
-		*rps, overshootNote, cap, resubmitEvery.String())
+	fmt.Printf("\n%d issuer(s): target %d rps%s, in-flight cap %d nonces, resubmit after %s\n\n",
+		len(senders), *rps, overshootNote, cap, resubmitEvery.String())
 
 	// Send workers sign + submit nonces handed to them by the issuer. Signing
 	// is spread across all these goroutines (nproc cores) so it never gates the
 	// issuer's 1ms cadence.
-	sendCh := make(chan uint64, cap)
+	sendCh := make(chan txKey, cap)
 	var wg sync.WaitGroup
 	for i := 0; i < sendWorkers; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			sendWorker(bc, sendCh, privateKey, signer, address)
+			sendWorker(bc, sendCh, senders, signer)
 		}()
 	}
 
 	go watchActiveRPCs(ctx, bc, activeRPCsFilePath())
-	go monitorNonce(ctx, bc, address)
-	go issuer(ctx, sendCh, float64(*rps), *overshootFlag, uint64(cap), startNonce)
+	go monitorNonce(ctx, bc, senders)
+	go issuer(ctx, sendCh, float64(*rps), *overshootFlag, uint64(cap), senders)
 
 	<-ctx.Done()
 	close(sendCh)
@@ -526,14 +557,14 @@ func main() {
 // (= 1 second's worth), so the issuer makes up a deficit from the trailing ~1s
 // instead of dropping the tail of each wall-second, while the burst cap keeps a
 // long stall from triggering an unbounded catch-up flood.
-func issuer(ctx context.Context, sendCh chan<- uint64, baseRPS, overshoot float64, cap, startNonce uint64) {
+func issuer(ctx context.Context, sendCh chan<- txKey, baseRPS, overshoot float64, cap uint64, senders []*sender) {
 	ticker := time.NewTicker(time.Millisecond)
 	defer ticker.Stop()
 
 	ratePerSec := baseRPS * (1 + overshoot)
 	burst := baseRPS // rolling ~1s window: bounded catch-up
 
-	nextNonce := startNonce
+	next := 0 // round-robin over senders
 	tokens := 0.0
 	last := time.Now()
 
@@ -549,13 +580,15 @@ func issuer(ctx context.Context, sendCh chan<- uint64, baseRPS, overshoot float6
 		// where they can never mine. monitorNonce detects that and requests a resync;
 		// jump to the live frontier and abandon the stranded txs so we mine again
 		// with no manual restart.
-		if resyncPending.Load() {
-			rt := resyncTarget.Load()
-			n := track.dropInflight()
-			nextNonce = rt
+		if targets := takeResyncs(); targets != nil {
+			which := make(map[uint32]bool, len(targets))
+			for id, frontier := range targets {
+				senders[id].nextNonce = frontier
+				which[id] = true
+			}
+			n := track.dropInflight(which)
 			tokens = 0 // don't burst the catch-up right after a resync
-			resyncPending.Store(false)
-			fmt.Fprintf(os.Stderr, "\nnonce: resynced issuer to live frontier %d, abandoned %d stranded tx(s)\n", rt, n)
+			fmt.Fprintf(os.Stderr, "\nnonce: resynced %d sender(s) to their live frontier, abandoned %d stranded tx(s)\n", len(targets), n)
 		}
 
 		now := time.Now()
@@ -568,10 +601,12 @@ func issuer(ctx context.Context, sendCh chan<- uint64, baseRPS, overshoot float6
 
 		saturated := false
 		for tokens >= 1 && track.inFlight() < cap && !saturated {
+			s := senders[next]
 			select {
-			case sendCh <- nextNonce:
+			case sendCh <- txKey{sender: uint32(next), nonce: s.nextNonce}:
 				track.issued.Add(1)
-				nextNonce++
+				s.nextNonce++
+				next = (next + 1) % len(senders)
 				tokens--
 			case <-ctx.Done():
 				return
@@ -596,15 +631,14 @@ func issuer(ctx context.Context, sendCh chan<- uint64, baseRPS, overshoot float6
 //
 // A clean failover (new site already at the old tip) keeps frontier == lowest
 // in-flight, so this never fires, only a genuine regression does.
-func monitorNonce(ctx context.Context, bc *broadcaster, address common.Address) {
+func monitorNonce(ctx context.Context, bc *broadcaster, senders []*sender) {
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 	lastMined := track.mined.Load()
 	stalls := 0
-	resync := func(frontier uint64, why string) {
-		resyncTarget.Store(frontier)
-		resyncPending.Store(true)
-		fmt.Fprintf(os.Stderr, "\nnonce: %s, resyncing issuer to live frontier %d\n", why, frontier)
+	resync := func(targets map[uint32]uint64, why string) {
+		requestResync(targets)
+		fmt.Fprintf(os.Stderr, "\nnonce: %s, resyncing %d sender(s) to their live frontier\n", why, len(targets))
 		stalls = 0
 	}
 
@@ -617,16 +651,28 @@ func monitorNonce(ctx context.Context, bc *broadcaster, address common.Address) 
 
 		mined := track.mined.Load()
 		inflight := track.inFlight()
-		frontier, ok := maxAcceptedNonce(ctx, bc, address)
-
-		// Fast path: we're AHEAD of the frontier (a gap, e.g. failover to a site
-		// behind the old tip). Our in-flight can never mine; resync down to it now.
-		if ok && inflight > 0 {
-			if low, have := track.lowestInflightNonce(); have && frontier < low {
-				resync(frontier, fmt.Sprintf("frontier %d below lowest in-flight %d (failover gap)", frontier, low))
-				lastMined = mined
-				continue
+		lows := track.lowestInflight()
+		frontiers := make(map[uint32]uint64, len(lows))
+		ok := len(lows) == 0
+		for id := range lows {
+			if f, got := maxAcceptedNonce(ctx, bc, senders[id].addr); got {
+				frontiers[id] = f
+				ok = true
 			}
+		}
+
+		// Fast path: a sender is AHEAD of its frontier (a gap, e.g. failover to a
+		// site behind the old tip). Its in-flight can never mine; resync it now.
+		gapped := map[uint32]uint64{}
+		for id, low := range lows {
+			if f, got := frontiers[id]; got && f < low {
+				gapped[id] = f
+			}
+		}
+		if len(gapped) > 0 {
+			resync(gapped, fmt.Sprintf("%d sender(s) with frontier below lowest in-flight (failover gap)", len(gapped)))
+			lastMined = mined
+			continue
 		}
 
 		// General path: mined FROZEN while we still hold in-flight work is a stall, // our nonce view has desynced from the chain (e.g. the watcher missed mines
@@ -642,8 +688,8 @@ func monitorNonce(ctx context.Context, bc *broadcaster, address common.Address) 
 			stalls = 0
 		}
 		lastMined = mined
-		if stalls >= 3 && ok {
-			resync(frontier, fmt.Sprintf("stalled ~%ds with %d in-flight and 0 mined", stalls*5, inflight))
+		if stalls >= 3 && ok && len(frontiers) > 0 {
+			resync(frontiers, fmt.Sprintf("stalled ~%ds with %d in-flight and 0 mined", stalls*5, inflight))
 		}
 	}
 }
@@ -675,20 +721,20 @@ func maxAcceptedNonce(ctx context.Context, bc *broadcaster, address common.Addre
 
 func sendWorker(
 	bc *broadcaster,
-	sendCh <-chan uint64,
-	key *ecdsa.PrivateKey,
+	sendCh <-chan txKey,
+	senders []*sender,
 	signer types.Signer,
-	address common.Address,
 ) {
-	for nonce := range sendCh {
-		tx := types.NewTransaction(nonce, address, big.NewInt(1), gasLimitNative, gasPrice, nil)
-		signed, err := types.SignTx(tx, signer, key)
+	for k := range sendCh {
+		s := senders[k.sender]
+		tx := types.NewTransaction(k.nonce, s.addr, big.NewInt(1), gasLimitNative, gasPrice, nil)
+		signed, err := types.SignTx(tx, signer, s.key)
 		if err != nil {
-			fmt.Printf("sign nonce %d: %v\n", nonce, err)
+			fmt.Printf("sign sender %d nonce %d: %v\n", k.sender, k.nonce, err)
 			continue
 		}
 		now := time.Now()
-		track.register(nonce, &txState{signed: signed, firstSend: now, lastSend: now})
+		track.register(k, &txState{signed: signed, firstSend: now, lastSend: now})
 		// Fire-and-forget to every node; a failed/dropped send is fine, the tx
 		// stays in flight and the resubmit loop re-broadcasts it. We only drop
 		// it from accounting when it mines.
