@@ -136,6 +136,20 @@ var sendBatch = 1
 // the node admits instead of hammering it until the resubmit interval.
 var refused atomic.Uint64
 
+// sendErrs counts txs the node rejected for any other non-benign reason (and
+// whole batches that failed); the first few messages are printed so a silent
+// loss (a tx that never reaches the pool strands its sender until resubmit)
+// names itself.
+var sendErrs atomic.Uint64
+var sendErrSamples atomic.Uint64
+
+func noteSendErr(err error) {
+	sendErrs.Add(1)
+	if sendErrSamples.Add(1) <= 5 {
+		fmt.Printf("send error: %v\n", err)
+	}
+}
+
 const refusalPause = 100 * time.Millisecond
 
 func poolFull(err error) bool {
@@ -207,12 +221,19 @@ func (n *nodeSender) run(ctx context.Context, timeout time.Duration) {
 		}
 		wait.Stop()
 		sctx, cancel := context.WithTimeout(ctx, timeout)
-		_ = n.rc.BatchCallContext(sctx, batch)
+		if err := n.rc.BatchCallContext(sctx, batch); err != nil {
+			sendErrs.Add(uint64(len(batch) - 1))
+			noteSendErr(err)
+		}
 		cancel()
 		var again []*types.Transaction
 		for i, el := range batch {
-			if poolFull(el.Error) {
+			switch {
+			case el.Error == nil:
+			case poolFull(el.Error):
 				again = append(again, txs[i])
+			case !benignSendErr(el.Error):
+				noteSendErr(el.Error)
 			}
 		}
 		if len(again) > 0 {

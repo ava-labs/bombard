@@ -613,8 +613,8 @@ func main() {
 	close(sendCh)
 	wg.Wait()
 	<-reportDone
-	fmt.Printf("FINAL issued=%d mined=%d inflight=%d resubmits=%d dropped=%d refused=%d\n",
-		track.issued.Load(), track.mined.Load(), track.inFlight(), track.resent.Load(), track.dropped.Load(), refused.Load())
+	fmt.Printf("FINAL issued=%d mined=%d inflight=%d resubmits=%d dropped=%d refused=%d senderrs=%d\n",
+		track.issued.Load(), track.mined.Load(), track.inFlight(), track.resent.Load(), track.dropped.Load(), refused.Load(), sendErrs.Load())
 
 	if *runDuration > 0 {
 		endSnaps := scrapeAllNodes(scrapeURLs)
