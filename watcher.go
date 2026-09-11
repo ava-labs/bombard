@@ -84,6 +84,15 @@ func watchBlocks(ctx context.Context, wsURL string, pollInterval time.Duration) 
 	getBlock := func(c *rpc.Client, out *blockInfo, tag string) error {
 		cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
+		if tag == "latest" && settled.enabled.Load() {
+			// SAE: "latest" resolves to the SETTLED head; the accepted tip is
+			// eth_blockNumber. Mined means accepted, so follow the tip.
+			var n string
+			if err := c.CallContext(cctx, &n, "eth_blockNumber"); err != nil {
+				return err
+			}
+			tag = n
+		}
 		return c.CallContext(cctx, out, "eth_getBlockByNumber", tag, false)
 	}
 
