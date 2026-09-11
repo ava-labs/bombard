@@ -487,6 +487,7 @@ func main() {
 		}
 	}()
 	if *settledFlag {
+		settled.enabled.Store(true) // before any nonce read, so acceptedNonce picks the SAE source
 		go settledLoop(ctx, setupRPC, 100*time.Millisecond)
 	}
 	chainID, err := client.NetworkID(ctx)
