@@ -9,6 +9,9 @@ package main
 import (
 	"context"
 	"fmt"
+
+	"github.com/ava-labs/libevm/common"
+	"github.com/ava-labs/libevm/ethclient"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -98,6 +101,21 @@ func settledStats() string {
 	}
 	settledPrev.txs, settledPrev.at = txs, now
 	return fmt.Sprintf(" settledTps=%.0f lag=%d", tps, lag)
+}
+
+// acceptedNonce is the sender's next nonce at the chain's accepted frontier.
+// Synchronous chains: NonceAt(latest). SAE chains (-settled): "latest" is the
+// SETTLED state, which lags the accepted head by the whole settlement window,
+// so a resync seeded from it re-issues nonces the chain already has and every
+// tx is "nonce too low" until the window drains (a ~20 s freeze). There the
+// pending nonce (projected accepted nonce + pool) is the safe source.
+// ponytail: pending can sit above a queued gap after a crash; the resubmit loop
+// heals that, a dedicated accepted-nonce RPC would be exact.
+func acceptedNonce(ctx context.Context, c *ethclient.Client, addr common.Address) (uint64, error) {
+	if settled.enabled.Load() {
+		return c.PendingNonceAt(ctx, addr)
+	}
+	return c.NonceAt(ctx, addr, nil)
 }
 
 // settledSnapshot returns settled txs so far, the settled head and the lag in blocks.

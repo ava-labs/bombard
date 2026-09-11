@@ -39,7 +39,7 @@ func abiCall(sel string, words ...[]byte) []byte {
 // nonce is read live, so a rerun deploys a fresh token (cheap, one block).
 func setupERC20(ctx context.Context, client *ethclient.Client, bc *broadcaster, senders []*sender, signer types.Signer) (common.Address, error) {
 	root := senders[0]
-	nonce, err := client.NonceAt(ctx, root.addr, nil)
+	nonce, err := acceptedNonce(ctx, client, root.addr)
 	if err != nil {
 		return common.Address{}, err
 	}
@@ -63,7 +63,7 @@ func setupERC20(ctx context.Context, client *ethclient.Client, bc *broadcaster, 
 	}
 	deadline := time.Now().Add(2 * time.Minute)
 	for {
-		n, err := client.NonceAt(ctx, root.addr, nil)
+		n, err := acceptedNonce(ctx, client, root.addr)
 		if err == nil && n >= nonce {
 			code, err := client.CodeAt(ctx, contract, nil)
 			if err != nil || len(code) == 0 {

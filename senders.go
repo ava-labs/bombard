@@ -89,7 +89,7 @@ func fundSenders(ctx context.Context, client *ethclient.Client, bc *broadcaster,
 		return 0, nil
 	}
 	root := senders[0]
-	nonce, err := client.NonceAt(ctx, root.addr, nil)
+	nonce, err := acceptedNonce(ctx, client, root.addr)
 	if err != nil {
 		return 0, err
 	}
@@ -110,7 +110,7 @@ func fundSenders(ctx context.Context, client *ethclient.Client, bc *broadcaster,
 	// nothing, funding txs are cheap to re-run on the next start.
 	deadline := time.Now().Add(2 * time.Minute)
 	for {
-		n, err := client.NonceAt(ctx, root.addr, nil)
+		n, err := acceptedNonce(ctx, client, root.addr)
 		if err == nil && n >= nonce {
 			return len(need), nil
 		}

@@ -792,7 +792,7 @@ func maxAcceptedNonce(ctx context.Context, bc *broadcaster, address common.Addre
 			continue
 		}
 		nctx, cancel := context.WithTimeout(ctx, 4*time.Second)
-		nn, err := n.client.NonceAt(nctx, address, nil) // nil = latest accepted block
+		nn, err := acceptedNonce(nctx, n.client, address) // nil = latest accepted block
 		cancel()
 		if err != nil {
 			continue
