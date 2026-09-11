@@ -154,6 +154,7 @@ func (b *broadcaster) queued() int {
 	}
 	return n
 }
+
 var sendErrSamples atomic.Uint64
 
 func noteSendErr(err error) {
