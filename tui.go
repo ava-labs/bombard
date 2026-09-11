@@ -123,6 +123,9 @@ func printStats(s statsSnapshot) {
 	if settled.enabled.Load() {
 		behind += settledStats()
 	}
+	if clientQueued != nil {
+		behind += fmt.Sprintf(" clientQ=%d", clientQueued())
+	}
 
 	if s.latencySamples > 0 {
 		fmt.Printf("STATS issued=%d mined=%d inflight=%d/%d resubmits=%d minedTps=%.0f/%d%s | total p50=%v p95=%v p99=%v\n",

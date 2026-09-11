@@ -417,6 +417,7 @@ func main() {
 	bc, err := newBroadcaster(ctx, rpcURLs, *sendTimeoutFlag)
 	if err == nil {
 		bc.fanout = *fanoutFlag
+		clientQueued = bc.queued
 	}
 	if err != nil {
 		fmt.Printf("Failed to start broadcaster: %v\n", err)

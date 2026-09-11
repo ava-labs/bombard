@@ -141,6 +141,19 @@ var refused atomic.Uint64
 // loss (a tx that never reaches the pool strands its sender until resubmit)
 // names itself.
 var sendErrs atomic.Uint64
+
+// clientQueued reports txs issued but still sitting in this process's per-node
+// send queues (not yet handed to any node); printed on STATS so "in flight" can
+// be split between the client and the chain.
+var clientQueued func() int
+
+func (b *broadcaster) queued() int {
+	n := 0
+	for _, ns := range b.nodes {
+		n += len(ns.queue)
+	}
+	return n
+}
 var sendErrSamples atomic.Uint64
 
 func noteSendErr(err error) {
