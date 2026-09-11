@@ -33,7 +33,13 @@ func noteBlockTxs(num uint64, txCount int) {
 		return
 	}
 	settled.mu.Lock()
-	settled.txsAt[num] = txCount
+	if num <= settled.settledN {
+		// The settled head already passed this block before the watcher saw it:
+		// count it now instead of leaving it uncounted forever.
+		settled.txs += uint64(txCount)
+	} else {
+		settled.txsAt[num] = txCount
+	}
 	settled.mu.Unlock()
 }
 
