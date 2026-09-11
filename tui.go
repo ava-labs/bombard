@@ -124,7 +124,7 @@ func printStats(s statsSnapshot) {
 		behind += settledStats()
 	}
 	if clientQueued != nil {
-		behind += fmt.Sprintf(" clientQ=%d", clientQueued())
+		behind += fmt.Sprintf(" clientQ=%d benign=%d senderrs=%d", clientQueued(), benignErrs.Load(), sendErrs.Load())
 	}
 
 	if s.latencySamples > 0 {

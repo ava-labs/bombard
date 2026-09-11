@@ -142,6 +142,11 @@ var refused atomic.Uint64
 // names itself.
 var sendErrs atomic.Uint64
 
+// benignErrs counts per-tx responses bombard treats as harmless ("already
+// known", "nonce too low"). A node that wrongly says nonce too low makes a tx
+// vanish silently until the 20 s resubmit; this counter makes that visible.
+var benignErrs atomic.Uint64
+
 // clientQueued reports txs issued but still sitting in this process's per-node
 // send queues (not yet handed to any node); printed on STATS so "in flight" can
 // be split between the client and the chain.
@@ -255,6 +260,10 @@ func (n *nodeSender) run(ctx context.Context, timeout time.Duration) {
 				again = append(again, txs[i])
 			case !benignSendErr(el.Error):
 				noteSendErr(el.Error)
+			default:
+				if benignErrs.Add(1) <= 3 {
+					fmt.Printf("benign send error: %v\n", el.Error)
+				}
 			}
 		}
 		if len(again) > 0 {

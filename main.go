@@ -625,8 +625,8 @@ func main() {
 	close(sendCh)
 	wg.Wait()
 	<-reportDone
-	fmt.Printf("FINAL issued=%d mined=%d inflight=%d resubmits=%d dropped=%d refused=%d senderrs=%d\n",
-		track.issued.Load(), track.mined.Load(), track.inFlight(), track.resent.Load(), track.dropped.Load(), refused.Load(), sendErrs.Load())
+	fmt.Printf("FINAL issued=%d mined=%d inflight=%d resubmits=%d dropped=%d refused=%d senderrs=%d benign=%d\n",
+		track.issued.Load(), track.mined.Load(), track.inFlight(), track.resent.Load(), track.dropped.Load(), refused.Load(), sendErrs.Load(), benignErrs.Load())
 	if settled.enabled.Load() {
 		stx, shead, lag := settledSnapshot()
 		fmt.Printf("SETTLED txs=%d head=%d lag=%d blocks (accepted %d)\n", stx, shead, lag, settled.accepted.Load())
