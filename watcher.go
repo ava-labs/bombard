@@ -36,6 +36,7 @@ func logBlock(num uint64, txCount int, tsMs, gasUsed, gasLimit uint64) {
 		return
 	}
 	blockLog.seen[num] = true
+	noteBlockTxs(num, txCount)
 
 	// Per-block line intentionally not printed; STATS lines carry the signal.
 	if num > blockLog.lastNum {
@@ -46,7 +47,9 @@ func logBlock(num uint64, txCount int, tsMs, gasUsed, gasLimit uint64) {
 
 func hexToUint64(hex string) uint64 {
 	var val uint64
-	fmt.Sscanf(hex, "0x%x", &val)
+	if _, err := fmt.Sscanf(hex, "0x%x", &val); err != nil {
+		fmt.Sscanf(hex, "%d", &val)
+	}
 	return val
 }
 

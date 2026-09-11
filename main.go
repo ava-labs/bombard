@@ -300,6 +300,7 @@ func main() {
 	connsFlag := flag.Int("conns", sendConcPerNode, "Sender goroutines (keep-alive connections) per node.")
 	batchWaitFlag := flag.Duration("batchwait", sendBatchWait, "How long a sender collects txs for one batch after the first. Raise it with few -conns so batches fill.")
 	gasHeadroomFlag := flag.Float64("gasheadroom", 1.5, "Multiplier on the head block's base fee, re-read every second; keeps signed txs above a rising base fee without feeding the eth_gasPrice oracle.")
+	settledFlag := flag.Bool("settled", false, "SAE chains: poll edb_settledNumber on the first endpoint and report settled tx/s and the settlement lag next to minedTps.")
 	rps := flag.Int("rps", 1000, "Target transactions issued per second")
 	targetTxs := flag.Uint64("txs", 0, "Stop after at least this many mined txs; 0 means run until interrupted")
 	runDuration := flag.Duration("duration", 0, "Stop after this duration; 0 means run until interrupted or --txs is reached")
@@ -484,6 +485,9 @@ func main() {
 			}
 		}
 	}()
+	if *settledFlag {
+		go settledLoop(ctx, setupRPC, 100*time.Millisecond)
+	}
 	chainID, err := client.NetworkID(ctx)
 	if err != nil {
 		fmt.Printf("Failed to get chain ID: %v\n", err)
@@ -622,6 +626,10 @@ func main() {
 	<-reportDone
 	fmt.Printf("FINAL issued=%d mined=%d inflight=%d resubmits=%d dropped=%d refused=%d senderrs=%d\n",
 		track.issued.Load(), track.mined.Load(), track.inFlight(), track.resent.Load(), track.dropped.Load(), refused.Load(), sendErrs.Load())
+	if settled.enabled.Load() {
+		stx, shead, lag := settledSnapshot()
+		fmt.Printf("SETTLED txs=%d head=%d lag=%d blocks (accepted %d)\n", stx, shead, lag, settled.accepted.Load())
+	}
 
 	if *runDuration > 0 {
 		endSnaps := scrapeAllNodes(scrapeURLs)
