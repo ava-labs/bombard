@@ -1,6 +1,6 @@
 module github.com/ava-labs/bombard
 
-go 1.26.6
+go 1.26.10
 
 require (
 	github.com/ava-labs/libevm v1.13.15-0.20251016142715-1bccf4f2ddb2
